@@ -29,7 +29,7 @@ class OpenMDAOServerRecorder(BaseRecorder):
         Dict that holds the data needed to generate N2 diagram.
     """
 
-    def __init__(self, out):
+    def __init__(self):
         """
         Initialize the OpenMDAOServerRecorder.
         """
