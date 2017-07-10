@@ -5,7 +5,9 @@ Class definition for OpenMDAOServerRecorder, which provides access to the OpenMD
 import io
 import requests
 
+import base64
 import json
+import bson
 import numpy as np
 from six import iteritems
 from six.moves import cPickle as pickle
@@ -17,7 +19,7 @@ from openmdao.solvers.solver import Solver, NonlinearSolver
 from openmdao.recorders.recording_iteration_stack import get_formatted_iteration_coordinate
 
 format_version = 1
-_endpoint = 'http://127.0.0.1:8000/'
+_endpoint = 'http://127.0.0.1:8000/case'
 
 class OpenMDAOServerRecorder(BaseRecorder):
     """
@@ -36,12 +38,17 @@ class OpenMDAOServerRecorder(BaseRecorder):
         super(OpenMDAOServerRecorder, self).__init__()
 
         self.model_viewer_data = None
-        case_request = requests.post(_endpoint + 'case', data = {
-            'case_name': 'test',
+
+        case_data_dict = {
+            'case_name': 'recorder test',
             'owner': 'temp_owner'
-            })
+        }
+
+        case_data = json.dumps(case_data_dict)
+
+        case_request = requests.post(_endpoint, data=case_data)
         response = case_request.json()
-        self._case_id = response['case_id']
+        self._case_id = str(response['case_id'])
 
     def record_iteration(self, object_requesting_recording, metadata, **kwargs):
         """
@@ -180,10 +187,10 @@ class OpenMDAOServerRecorder(BaseRecorder):
             "iteration_coordinate": iteration_coordinate,
             "success": metadata['success'],
             "msg": metadata['msg'],
-            "desvars": desvars_array,
-            "responses": responses_array,
-            "objectives": objectives_array,
-            "constraints": constraints_array
+            "desvars": self.convert_to_list(desvars_array),
+            "responses": self.convert_to_list(responses_array),
+            "objectives": self.convert_to_list(objectives_array),
+            "constraints": self.convert_to_list(constraints_array)
         }
 
         global_iteration_dict = {
@@ -194,8 +201,8 @@ class OpenMDAOServerRecorder(BaseRecorder):
         driver_iteration = json.dumps(driver_iteration_dict)
         global_iteration = json.dumps(global_iteration_dict)
         
-        requests.post(_endpoint + self._case_id + '/driver_iterations', data=driver_iteration)
-        requests.post(_endpoint + self._case_id + '/global_iterations', data=global_iteration)
+        requests.post(_endpoint + '/' + self._case_id + '/driver_iterations', data=driver_iteration)
+        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration)
 
     def record_iteration_system(self, object_requesting_recording, metadata, method):
         """
@@ -296,9 +303,9 @@ class OpenMDAOServerRecorder(BaseRecorder):
             'iteration_coordinate': iteration_coordinate,
             'success': metadata['success'],
             'msg': metadata['msg'],
-            'inputs': inputs_array,
-            'outputs': outputs_array,
-            'residuals': residuals_array
+            'inputs': self.convert_to_list(inputs_array),
+            'outputs': self.convert_to_list(outputs_array),
+            'residuals': self.convert_to_list(residuals_array)
         }
 
         global_iteration_dict = {
@@ -309,8 +316,8 @@ class OpenMDAOServerRecorder(BaseRecorder):
         system_iteration = json.dumps(system_iteration_dict)
         global_iteration = json.dumps(global_iteration_dict)
 
-        requests.post(_endpoint + self._case_id + '/system_iterations', data=system_iteration)
-        requests.post(_endpoint + self._case_id + '/global_iterations', data=global_iteration)
+        requests.post(_endpoint + '/' + self._case_id + '/system_iterations', data=system_iteration)
+        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration)
 
     def record_iteration_solver(self, object_requesting_recording, metadata, **kwargs):
         """
@@ -400,8 +407,8 @@ class OpenMDAOServerRecorder(BaseRecorder):
             'msg': metadata['msg'],
             'abs_err': abs_error,
             'rel_err': rel_error,
-            'solver_output': outputs_array,
-            'solver_residuals': residuals_array
+            'solver_output': self.convert_to_list(outputs_array),
+            'solver_residuals': self.convert_to_list(residuals_array)
         }
 
         global_iteration_dict = {
@@ -412,8 +419,8 @@ class OpenMDAOServerRecorder(BaseRecorder):
         solver_iteration = json.dumps(solver_iteration_dict)
         global_iteration = json.dumps(global_iteration_dict)
 
-        requests.post(_endpoint + self._case_id + '/solver_iterations', data=solver_iteration)
-        requests.post(_endpoint + self._case_id + '/global_iterations', data=global_iteration)
+        requests.post(_endpoint + '/' + self._case_id + '/solver_iterations', data=solver_iteration)
+        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration)
 
     def record_metadata(self, object_requesting_recording):
         """
@@ -450,7 +457,7 @@ class OpenMDAOServerRecorder(BaseRecorder):
         }
         driver_metadata = json.dumps(driver_metadata_dict)
 
-        requests.post(_endpoint + self._case_id + '/driver_metadata', data=driver_metadata)
+        requests.post(_endpoint + '/' + self._case_id + '/driver_metadata', data=driver_metadata)
 
     def record_metadata_system(self, object_requesting_recording):
         """
@@ -468,7 +475,7 @@ class OpenMDAOServerRecorder(BaseRecorder):
         }
         system_metadata = json.dumps(system_metadata_dict)
         
-        requests.post(_endpoint + self._case_id + '/system_metadata', data=system_metadata)
+        requests.post(_endpoint + '/' + self._case_id + '/system_metadata', data=system_metadata)
 
     def record_metadata_solver(self, object_requesting_recording):
         """
@@ -483,7 +490,16 @@ class OpenMDAOServerRecorder(BaseRecorder):
         solver_class = type(object_requesting_recording).__name__
         id = "%s.%s".format(path, solver_class)
 
-        solver_options = json.dumps(object_requesting_recording.options)
+        opts = pickle.dumps(object_requesting_recording.options, 
+                            pickle.HIGHEST_PROTOCOL)
+        encoded_opts = base64.encodebytes(opts)
+
+        solver_options_dict = {
+            'options': encoded_opts.decode('ascii'),
+        }
+
+        solver_options = json.dumps(solver_options_dict)
+        
         solver_metadata_dict = {
             'id': id,
             'solver_options': solver_options,
@@ -491,10 +507,27 @@ class OpenMDAOServerRecorder(BaseRecorder):
         }
         solver_metadata = json.dumps(solver_metadata_dict)
 
-        requests.post(_endpoint + self._case_id + '/solver_metadata', data=solver_metadata)
+        requests.post(_endpoint + '/' + self._case_id + '/solver_metadata', data=solver_metadata)
 
     def close(self):
         """
-        Close `out`.
+        Close.
         """
         pass
+
+    def convert_to_list(self, obj):
+        if isinstance(obj, np.ndarray):
+            return self.convert_to_list(obj.tolist())
+        elif isinstance(obj, (list, tuple)):
+            return [self.convert_to_list(item) for item in obj]
+        elif obj == None:
+            return []
+        else:
+            return obj
+
+    def is_serializable(self, obj):
+        try:
+            json.dumps(obj)
+            return True
+        except TypeError:
+            return False
