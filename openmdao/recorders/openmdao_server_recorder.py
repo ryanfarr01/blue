@@ -524,10 +524,3 @@ class OpenMDAOServerRecorder(BaseRecorder):
             return []
         else:
             return obj
-
-    def is_serializable(self, obj):
-        try:
-            json.dumps(obj)
-            return True
-        except TypeError:
-            return False
