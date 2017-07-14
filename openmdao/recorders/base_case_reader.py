@@ -1,7 +1,7 @@
 """
 Docstring.
 """
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta
 
 
 class BaseCaseReader(object):
@@ -19,12 +19,18 @@ class BaseCaseReader(object):
         An integer representation of the format version in the recorded file.
     filename : str
         The name of the file from which the recorded cases are to be loaded.
-    parameters : dict
-        Parameters metadata from the cases.
-    unknowns : dict
-        Unknowns metadata from the cases.
-    num_cases : int
-        The number of cases contained in the recorded file.
+    driver_cases : list
+        The list of driver cases to be loaded.
+    system_cases : list
+        The list of system cases to be loaded.
+    solver_cases : list
+        The list of solver cases to be loaded.
+    driver_metadata : dict
+        The dictionary of driver metadata to be loaded.
+    system_metadata : dict
+        The dictionary of system metadata to be loaded.
+    solver_metadata : dict
+        The dictionary of solver metadata to be loaded..
     """
 
     __metaclass__ = ABCMeta
@@ -35,32 +41,10 @@ class BaseCaseReader(object):
         """
         self.format_version = None
         self.filename = filename
-        self.parameters = None
-        self.unknowns = None
-        self._case_keys = ()
-        self.num_cases = 0
+        self.driver_cases = None
+        self.system_cases = None
+        self.solver_cases = None
 
-    @abstractmethod
-    def get_case(self, case_id):
-        """
-        Get cases.
-
-        Parameters
-        ----------
-        case_id : str or int
-            If int, the index of the case to be read in the case iterations.
-            If given as a string, it is the identifier of the case.
-
-        Returns
-        -------
-        Case
-            The case from the recorded file with the given identifier or index.
-
-        """
-        pass
-
-    def list_cases(self):
-        """
-        Return a tuple of the case string identifiers available in this instance of the CaseReader.
-        """
-        return self._case_keys
+        self.driver_metadata = {}
+        self.system_metadata = {}
+        self.solver_metadata = {}
