@@ -31,24 +31,39 @@ class OpenMDAOServerRecorder(BaseRecorder):
         Dict that holds the data needed to generate N2 diagram.
     """
 
-    def __init__(self):
+    def __init__(self, token, case_name='Case Recording'):
         """
         Initialize the OpenMDAOServerRecorder.
+
+        Parameters
+        ----------
+        token: <string>
+            The token to be passed as a passphrase for authentication of each server request
+        case_name: <string>
+            The name this case should be stored under. Default: 'Case Recording'
         """
         super(OpenMDAOServerRecorder, self).__init__()
 
         self.model_viewer_data = None
+        self._headers = {'token': token}
 
         case_data_dict = {
-            'case_name': 'recorder test',
+            'case_name': case_name,
             'owner': 'temp_owner'
         }
 
         case_data = json.dumps(case_data_dict)
 
-        case_request = requests.post(_endpoint, data=case_data)
+        case_request = requests.post(_endpoint, data=case_data, headers=self._headers)
         response = case_request.json()
-        self._case_id = str(response['case_id'])
+        if response['status'] != 'Failed':
+            self._case_id = str(response['case_id'])
+        else:
+            self._case_id = '-1'
+            print("Failed to initialize case on server. No messages will be accepted from server for this case.")
+
+            if 'reasoning' in response:
+                print("Failure reasoning: " + response['reasoning'])
 
     def record_iteration(self, object_requesting_recording, metadata, **kwargs):
         """
@@ -201,8 +216,8 @@ class OpenMDAOServerRecorder(BaseRecorder):
         driver_iteration = json.dumps(driver_iteration_dict)
         global_iteration = json.dumps(global_iteration_dict)
         
-        requests.post(_endpoint + '/' + self._case_id + '/driver_iterations', data=driver_iteration)
-        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration)
+        requests.post(_endpoint + '/' + self._case_id + '/driver_iterations', data=driver_iteration, headers=self._headers)
+        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration, headers=self._headers)
 
     def record_iteration_system(self, object_requesting_recording, metadata, method):
         """
@@ -316,8 +331,8 @@ class OpenMDAOServerRecorder(BaseRecorder):
         system_iteration = json.dumps(system_iteration_dict)
         global_iteration = json.dumps(global_iteration_dict)
 
-        requests.post(_endpoint + '/' + self._case_id + '/system_iterations', data=system_iteration)
-        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration)
+        requests.post(_endpoint + '/' + self._case_id + '/system_iterations', data=system_iteration, headers=self._headers)
+        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration, headers=self._headers)
 
     def record_iteration_solver(self, object_requesting_recording, metadata, **kwargs):
         """
@@ -419,8 +434,8 @@ class OpenMDAOServerRecorder(BaseRecorder):
         solver_iteration = json.dumps(solver_iteration_dict)
         global_iteration = json.dumps(global_iteration_dict)
 
-        requests.post(_endpoint + '/' + self._case_id + '/solver_iterations', data=solver_iteration)
-        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration)
+        requests.post(_endpoint + '/' + self._case_id + '/solver_iterations', data=solver_iteration, headers=self._headers)
+        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration, headers=self._headers)
 
     def record_metadata(self, object_requesting_recording):
         """
@@ -457,7 +472,7 @@ class OpenMDAOServerRecorder(BaseRecorder):
         }
         driver_metadata = json.dumps(driver_metadata_dict)
 
-        requests.post(_endpoint + '/' + self._case_id + '/driver_metadata', data=driver_metadata)
+        requests.post(_endpoint + '/' + self._case_id + '/driver_metadata', data=driver_metadata, headers=self._headers)
 
     def record_metadata_system(self, object_requesting_recording):
         """
@@ -477,7 +492,7 @@ class OpenMDAOServerRecorder(BaseRecorder):
         }
         system_metadata = json.dumps(system_metadata_dict)
         
-        requests.post(_endpoint + '/' + self._case_id + '/system_metadata', data=system_metadata)
+        requests.post(_endpoint + '/' + self._case_id + '/system_metadata', data=system_metadata, headers=self._headers)
 
     def record_metadata_solver(self, object_requesting_recording):
         """
@@ -509,7 +524,7 @@ class OpenMDAOServerRecorder(BaseRecorder):
         }
         solver_metadata = json.dumps(solver_metadata_dict)
 
-        requests.post(_endpoint + '/' + self._case_id + '/solver_metadata', data=solver_metadata)
+        requests.post(_endpoint + '/' + self._case_id + '/solver_metadata', data=solver_metadata, headers=self._headers)
 
     def close(self):
         """
