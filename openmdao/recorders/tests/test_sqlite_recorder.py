@@ -29,14 +29,12 @@ if PY2:
 if PY3:
     import pickle
 
-# check that pyoptsparse is installed
-# if it is, try to use SNOPT but fall back to SLSQP
+# check that pyoptsparse is installed. if it is, try to use SLSQP.
 OPT, OPTIMIZER = set_pyoptsparse_opt('SLSQP')
+
 if OPTIMIZER:
     from openmdao.drivers.pyoptsparse_driver import pyOptSparseDriver
-
-# optimizers = {'scipy': ScipyOptimizer, }
-optimizers = {'pyoptsparse': pyOptSparseDriver}
+    optimizers = {'pyoptsparse': pyOptSparseDriver}
 
 
 def run_driver(problem):
@@ -257,6 +255,12 @@ def _assertDriverMetadataRecorded(test, db_cur, expected):
 
 class TestSqliteRecorder(unittest.TestCase):
     def setUp(self):
+        if OPT is None:
+            raise unittest.SkipTest("pyoptsparse is not installed")
+
+        if OPTIMIZER is None:
+            raise unittest.SkipTest("pyoptsparse is not providing SLSQP")
+
         self.dir = mkdtemp()
         self.filename = os.path.join(self.dir, "sqlite_test")
         self.recorder = SqliteRecorder(self.filename)
@@ -949,7 +953,7 @@ class TestSqliteRecorder(unittest.TestCase):
         self.prob.setup(check=False)
         t0, t1 = run_driver(self.prob)
 
-        coordinate = [0, 'Driver', (0,), 'root._solve_nonlinear', (0,), 'NewtonSolver', (2,), 'ScipyIterativeSolver', (2,)]
+        coordinate = [0, 'Driver', (0,), 'root._solve_nonlinear', (0,), 'NewtonSolver', (2,), 'ScipyIterativeSolver', (1,)]
         expected_abs_error = 0.0
         expected_rel_error = 0.0
 
@@ -1175,7 +1179,7 @@ class TestSqliteRecorder(unittest.TestCase):
             self.prob.driver.opt_settings['ACC'] = 1e-2  # to speed the test up
             self.prob.driver.opt_settings['ACC'] = 1e-9
 
-        self.recorder.options['record_metadata'] = False
+        self.recorder.options['record_metadata'] = True
 
         # Add recorders
         # Driver
