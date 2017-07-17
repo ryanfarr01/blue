@@ -468,10 +468,12 @@ class OpenMDAOServerRecorder(BaseRecorder):
         object_requesting_recording: <System>
             The System that would like to record its metadata.
         """
-        scaling_factors = json.dumps(object_requesting_recording._scaling_vecs)
+        scaling_vecs = pickle.dumps(object_requesting_recording._scaling_vecs,
+                                    pickle.HIGHEST_PROTOCOL)
+        encoded_scaling_vecs = base64.encodebytes(scaling_vecs)
         system_metadata_dict = {
             'id': object_requesting_recording.pathname,
-            'scaling_factors': scaling_factors
+            'scaling_factors': encoded_scaling_vecs.decode('ascii')
         }
         system_metadata = json.dumps(system_metadata_dict)
         
