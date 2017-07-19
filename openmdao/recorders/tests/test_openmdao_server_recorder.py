@@ -4,6 +4,8 @@ import os
 import time
 import unittest
 import numpy as np
+import requests
+import requests_mock
 
 from shutil import rmtree
 from six import iteritems, PY2, PY3
@@ -35,9 +37,16 @@ OPT, OPTIMIZER = set_pyoptsparse_opt('SLSQP')
 if OPTIMIZER:
     from openmdao.drivers.pyoptsparse_driver import pyOptSparseDriver
 
-# optimizers = {'scipy': ScipyOptimizer, }
 optimizers = {'pyoptsparse': pyOptSparseDriver}
 
+_endpoint_base = 'http://207.38.86.50:18403/case'
+_default_case_id = '123456'
+_accepted_token = 'test'
+
+@requests_mock.Mocker()
+class ServerInterceptor:
+    def postCase(self, m):
+        m.register_uri('POST', _endpoint_base, {})
 
 def run_driver(problem):
     t0 = time.time()
