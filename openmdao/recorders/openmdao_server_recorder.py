@@ -19,7 +19,9 @@ from openmdao.solvers.solver import Solver, NonlinearSolver
 from openmdao.recorders.recording_iteration_stack import get_formatted_iteration_coordinate
 
 format_version = 1
-_endpoint = 'http://207.38.86.50:18403/case'
+_endpoint_addr = 'http://207.38.86.50'
+_port = '18403'
+_endpoint = _endpoint_addr + ':' + _port + '/case'
 
 class OpenMDAOServerRecorder(BaseRecorder):
     """
