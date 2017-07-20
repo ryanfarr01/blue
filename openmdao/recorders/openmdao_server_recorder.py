@@ -62,10 +62,11 @@ class OpenMDAOServerRecorder(BaseRecorder):
             self._case_id = str(response['case_id'])
         else:
             self._case_id = '-1'
-            print("Failed to initialize case on server. No messages will be accepted from server for this case.")
+            # print("Failed to initialize case on server. No messages will be accepted from server for this case.")
 
             if 'reasoning' in response:
-                print("Failure reasoning: " + response['reasoning'])
+                # print("Failure reasoning: " + response['reasoning'])
+                pass
 
     def record_iteration(self, object_requesting_recording, metadata, **kwargs):
         """

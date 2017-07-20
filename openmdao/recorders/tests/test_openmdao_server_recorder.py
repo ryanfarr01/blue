@@ -4,7 +4,6 @@ import os
 import time
 import unittest
 import numpy as np
-import requests
 import requests_mock
 
 from shutil import rmtree
@@ -39,14 +38,38 @@ if OPTIMIZER:
 
 optimizers = {'pyoptsparse': pyOptSparseDriver}
 
-_endpoint_base = 'http://207.38.86.50:18403/case'
-_default_case_id = '123456'
-_accepted_token = 'test'
-
 @requests_mock.Mocker()
-class ServerInterceptor:
-    def postCase(self, m):
-        m.register_uri('POST', _endpoint_base, {})
+class TestServerRecorder(unittest.TestCase):
+    _endpoint_base = 'http://207.38.86.50:18403/case'
+    _default_case_id = '123456'
+    _accepted_token = 'test'
+
+    def setUp(self):
+        super(TestServerRecorder, self).setUp()
+
+    def check_header(self, request, context):
+        if request.headers['token'] == self._accepted_token:
+            return {
+                'case_id': self._default_case_id,
+                'status': 'Success'
+            }
+        else:
+            return {
+                'case_id': '-1',
+                'status': 'Failed',
+                'reasoning': 'Bad token' 
+            }
+
+    def test_get_case_success(self, m):
+        m.post(self._endpoint_base, json=self.check_header, status_code=200)
+        recorder = OpenMDAOServerRecorder('test')
+        self.assertEqual(recorder._case_id, self._default_case_id)
+
+    def test_get_case_fail(self, m):
+        m.post(self._endpoint_base, json=self.check_header, status_code=200)
+        recorder = OpenMDAOServerRecorder('')
+        self.assertEqual(recorder._case_id, '-1')
+
 
 def run_driver(problem):
     t0 = time.time()
@@ -284,7 +307,7 @@ def _assertDriverMetadataRecorded(test, db_cur, expected):
     return
 
 
-class TestOpenMDAOServerRecorder(unittest.TestCase):
+class TestOpenMDAOServerRecorder():
     def setUp(self):
         self.recorder = OpenMDAOServerRecorder('')
         self.eps = 1e-5
@@ -1430,4 +1453,5 @@ class TestOpenMDAOServerRecorder(unittest.TestCase):
         pass
 
 if __name__ == "__main__":
+    # TestGetCase().test_get_case()
     unittest.main()
