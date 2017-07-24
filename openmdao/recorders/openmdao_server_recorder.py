@@ -119,6 +119,10 @@ class OpenMDAOServerRecorder(BaseRecorder):
         responses_array = None
         objectives_array = None
         constraints_array = None
+        desvars_values = None
+        responses_values = None
+        objectives_values = None
+        constraints_values = None
 
         # Just an example of the syntax for creating a numpy structured array
         # arr = np.zeros((1,), dtype=[('dv_x','(5,)f8'),('dv_y','(10,)f8')])
@@ -134,15 +138,12 @@ class OpenMDAOServerRecorder(BaseRecorder):
                 desvars_values = object_requesting_recording.get_design_var_values()
 
             if desvars_values:
-                dtype_tuples = []
+                desvars_array = []
                 for name, value in iteritems(desvars_values):
-                    tple = (name, '{}f8'.format(value.shape))
-                    dtype_tuples.append(tple)
-
-                desvars_array = np.zeros((1,), dtype=dtype_tuples)
-
-                for name, value in iteritems(desvars_values):
-                    desvars_array[name] = value
+                    desvars_array.append({
+                        'name': name,
+                        'values': list(value)
+                    })
 
         if self.options['record_responses']:
             if self._filtered_driver:
@@ -152,15 +153,12 @@ class OpenMDAOServerRecorder(BaseRecorder):
                 responses_values = object_requesting_recording.get_response_values()
 
             if responses_values:
-                dtype_tuples = []
+                responses_array = []
                 for name, value in iteritems(responses_values):
-                    tple = (name, '{}f8'.format(value.shape))
-                    dtype_tuples.append(tple)
-
-                responses_array = np.zeros((1,), dtype=dtype_tuples)
-
-                for name, value in iteritems(responses_values):
-                    responses_array[name] = value
+                    responses_array.append({
+                        'name': name,
+                        'values': list(value)
+                    })
 
         if self.options['record_objectives']:
             if self._filtered_driver:
@@ -170,15 +168,12 @@ class OpenMDAOServerRecorder(BaseRecorder):
                 objectives_values = object_requesting_recording.get_objective_values()
 
             if objectives_values:
-                dtype_tuples = []
+                objectives_array = []
                 for name, value in iteritems(objectives_values):
-                    tple = (name, '{}f8'.format(value.shape))
-                    dtype_tuples.append(tple)
-
-                objectives_array = np.zeros((1,), dtype=dtype_tuples)
-
-                for name, value in iteritems(objectives_values):
-                    objectives_array[name] = value
+                    objectives_array.append({
+                        'name': name,
+                        'values': list(value)
+                    })
 
         if self.options['record_constraints']:
             if self._filtered_driver:
@@ -188,15 +183,12 @@ class OpenMDAOServerRecorder(BaseRecorder):
                 constraints_values = object_requesting_recording.get_constraint_values()
 
             if constraints_values:
-                dtype_tuples = []
+                constraints_array = []
                 for name, value in iteritems(constraints_values):
-                    tple = (name, '{}f8'.format(value.shape))
-                    dtype_tuples.append(tple)
-
-                constraints_array = np.zeros((1,), dtype=dtype_tuples)
-
-                for name, value in iteritems(constraints_values):
-                    constraints_array[name] = value
+                    constraints_array.append({
+                        'name': name,
+                        'values': list(value)
+                    })
 
         iteration_coordinate = get_formatted_iteration_coordinate()
 

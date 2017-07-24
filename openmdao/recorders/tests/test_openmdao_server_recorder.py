@@ -5,6 +5,7 @@ import time
 import unittest
 import numpy as np
 import requests_mock
+import json
 
 from shutil import rmtree
 from six import iteritems, PY2, PY3
@@ -43,9 +44,73 @@ class TestServerRecorder(unittest.TestCase):
     _endpoint_base = 'http://207.38.86.50:18403/case'
     _default_case_id = '123456'
     _accepted_token = 'test'
+    recorder = None
+    recorded_metadata = False
+    driver_data = None
+    driver_iteration_data = None
+    recorded_driver_iteration = False
+    recorded_global_iteration = False
+    gloabl_iteration_data = None
 
     def setUp(self):
         super(TestServerRecorder, self).setUp()
+
+    def setup_sellar_model(self):
+        self.prob = Problem()
+
+        model = self.prob.model = Group()
+        model.add_subsystem('px', IndepVarComp('x', 1.0), promotes=['x'])
+        model.add_subsystem('pz', IndepVarComp('z', np.array([5.0, 2.0])), promotes=['z'])
+        model.add_subsystem('d1', SellarDis1withDerivatives(), promotes=['x', 'z', 'y1', 'y2'])
+        model.add_subsystem('d2', SellarDis2withDerivatives(), promotes=['z', 'y1', 'y2'])
+        model.add_subsystem('obj_cmp', ExecComp('obj = x**2 + z[1] + y1 + exp(-y2)',
+                            z=np.array([0.0, 0.0]), x=0.0),
+                            promotes=['obj', 'x', 'z', 'y1', 'y2'])
+
+        model.add_subsystem('con_cmp1', ExecComp('con1 = 3.16 - y1'), promotes=['con1', 'y1'])
+        model.add_subsystem('con_cmp2', ExecComp('con2 = y2 - 24.0'), promotes=['con2', 'y2'])
+        self.prob.model.nonlinear_solver = NonlinearBlockGS()
+
+        self.prob.model.add_design_var('x', lower=-100, upper=100)
+        self.prob.model.add_design_var('z', lower=-100, upper=100)
+        self.prob.model.add_objective('obj')
+        self.prob.model.add_constraint('con1')
+        self.prob.model.add_constraint('con2')
+
+    def setup_sellar_grouped_model(self):
+        self.prob = Problem()
+
+        model = self.prob.model = Group()
+
+        model.add_subsystem('px', IndepVarComp('x', 1.0), promotes=['x'])
+        model.add_subsystem('pz', IndepVarComp('z', np.array([5.0, 2.0])), promotes=['z'])
+
+        mda = model.add_subsystem('mda', Group(), promotes=['x', 'z', 'y1', 'y2'])
+        mda.linear_solver = ScipyIterativeSolver()
+        mda.add_subsystem('d1', SellarDis1withDerivatives(), promotes=['x', 'z', 'y1', 'y2'])
+        mda.add_subsystem('d2', SellarDis2withDerivatives(), promotes=['z', 'y1', 'y2'])
+
+        model.add_subsystem('obj_cmp', ExecComp('obj = x**2 + z[1] + y1 + exp(-y2)',
+                            z=np.array([0.0, 0.0]), x=0.0, y1=0.0, y2=0.0),
+                            promotes=['obj', 'x', 'z', 'y1', 'y2'])
+
+        model.add_subsystem('con_cmp1', ExecComp('con1 = 3.16 - y1'), promotes=['con1', 'y1'])
+        model.add_subsystem('con_cmp2', ExecComp('con2 = y2 - 24.0'), promotes=['con2', 'y2'])
+
+        mda.nonlinear_solver = NonlinearBlockGS()
+        model.linear_solver = ScipyIterativeSolver()
+
+        model.add_design_var('z', lower=np.array([-10.0, 0.0]), upper=np.array([10.0, 10.0]))
+        model.add_design_var('x', lower=0.0, upper=10.0)
+        model.add_objective('obj')
+        model.add_constraint('con1', upper=0.0)
+        model.add_constraint('con2', upper=0.0)
+
+    def setup_endpoints(self, m):
+        m.post(self._endpoint_base, json=self.check_header, status_code=200)
+        m.post(self._endpoint_base + '/' + self._default_case_id + '/global_iterations', json=self.check_global_iteration)
+        m.post(self._endpoint_base + '/' + self._default_case_id + '/driver_metadata', json=self.check_driver)
+        m.post(self._endpoint_base + '/' + self._default_case_id + '/driver_iterations', json=self.check_driver_iteration)
 
     def check_header(self, request, context):
         if request.headers['token'] == self._accepted_token:
@@ -60,16 +125,216 @@ class TestServerRecorder(unittest.TestCase):
                 'reasoning': 'Bad token' 
             }
 
+    def check_driver(self, request, context):
+        self.recorded_metadata = True
+        self.driver_data = request.body
+        return {'status': 'Success'}
+        
+    def check_driver_iteration(self, request, context):
+        self.recorded_driver_iteration = True
+        self.driver_iteration_data = request.body
+        return {'status': 'Success'}
+
+    def check_global_iteration(self, request, context):
+        self.recorded_global_iteration = True
+        self.global_iteration_data = request.body
+        return {'status': 'Success'}
+
     def test_get_case_success(self, m):
-        m.post(self._endpoint_base, json=self.check_header, status_code=200)
-        recorder = OpenMDAOServerRecorder('test')
+        self.setup_endpoints(m)
+        recorder = OpenMDAOServerRecorder(self._accepted_token)
         self.assertEqual(recorder._case_id, self._default_case_id)
 
     def test_get_case_fail(self, m):
-        m.post(self._endpoint_base, json=self.check_header, status_code=200)
+        self.setup_endpoints(m)
         recorder = OpenMDAOServerRecorder('')
         self.assertEqual(recorder._case_id, '-1')
 
+    def test_driver_records_metadata(self, m):
+        self.setup_endpoints(m)
+        recorder = OpenMDAOServerRecorder(self._accepted_token)
+
+        self.setup_sellar_model()
+
+        recorder.options['includes'] = ["p1.x"]
+        recorder.options['record_metadata'] = True
+        self.prob.driver.add_recorder(recorder)
+        self.prob.setup(check=False)
+
+        self.prob.cleanup()
+        self.assertTrue(self.recorded_metadata)
+        self.recorded_metadata = False
+
+        driv_data = json.loads(self.driver_data)
+        self.driver_data = None
+
+        driv_id = driv_data['id']
+        model_data = json.loads(driv_data['model_viewer_data'])
+        connections = model_data['connections_list']
+        self.assertEqual(driv_id, 'Driver')
+        self.assertEqual(len(connections), 11)
+
+    def test_driver_doesnt_record_metadata(self, m):
+        self.setup_endpoints(m)
+
+        self.setup_sellar_model()
+
+        recorder = OpenMDAOServerRecorder(self._accepted_token)
+        recorder.options['record_metadata'] = False
+        self.prob.driver.add_recorder(recorder)
+        self.prob.setup(check=False)
+
+        self.prob.cleanup()
+
+        self.assertFalse(self.recorded_metadata)
+        self.assertEqual(self.driver_data, None)
+
+    def test_only_desvars_recorded(self, m):
+        self.setup_endpoints(m)
+
+        recorder = OpenMDAOServerRecorder(self._accepted_token)
+
+        self.setup_sellar_model()
+
+        recorder.options['record_desvars'] = True
+        recorder.options['record_responses'] = False
+        recorder.options['record_objectives'] = False
+        recorder.options['record_constraints'] = False
+        self.prob.driver.add_recorder(recorder)
+
+        self.prob.setup(check=False)
+
+        t0, t1 = run_driver(self.prob)
+
+        self.prob.cleanup()  
+
+        expected_desvars = {
+                            "px.x": [1.0, ],
+                            "pz.z": [5.0, 2.0]
+                           }
+
+        driver_iteration_data = json.loads(self.driver_iteration_data)
+        self.driver_iteration_data = None
+        self.assertTrue({'name': 'px.x', 'values': [1.0]} in driver_iteration_data['desvars'])
+        self.assertTrue({'name': 'pz.z', 'values': [5.0, 2.0]} in driver_iteration_data['desvars'])
+        self.assertEqual(driver_iteration_data['responses'], [])
+        self.assertEqual(driver_iteration_data['objectives'], [])
+        self.assertEqual(driver_iteration_data['constraints'], [])
+
+    def test_only_objectives_recorded(self, m):
+        self.setup_endpoints(m)
+        recorder = OpenMDAOServerRecorder(self._accepted_token)
+
+        self.setup_sellar_model()
+
+        recorder.options['record_desvars'] = False
+        recorder.options['record_responses'] = False
+        recorder.options['record_objectives'] = True
+        recorder.options['record_constraints'] = False
+        self.prob.driver.add_recorder(recorder)
+        self.prob.setup(check=False)
+
+        t0, t1 = run_driver(self.prob)
+
+        self.prob.cleanup()
+
+        driver_iteration_data = json.loads(self.driver_iteration_data)
+        self.assertAlmostEqual(driver_iteration_data['objectives'][0]['values'][0], 28.5883082)
+        self.assertEqual(driver_iteration_data['objectives'][0]['name'], 'obj_cmp.obj')
+        self.assertEqual(driver_iteration_data['desvars'], [])
+        self.assertEqual(driver_iteration_data['responses'], [])
+        self.assertEqual(driver_iteration_data['constraints'], [])
+
+    def test_only_constraints_recorded(self, m):
+        self.setup_endpoints(m)
+        recorder = OpenMDAOServerRecorder(self._accepted_token)
+
+        self.setup_sellar_model()
+
+        recorder.options['record_desvars'] = False
+        recorder.options['record_responses'] = False
+        recorder.options['record_objectives'] = False
+        recorder.options['record_constraints'] = True
+        self.prob.driver.add_recorder(recorder)
+        self.prob.setup(check=False)
+
+        t0, t1 = run_driver(self.prob)
+
+        self.prob.cleanup()
+
+        driver_iteration_data = json.loads(self.driver_iteration_data)
+        if driver_iteration_data['constraints'][0]['name'] == 'con_cmp1.con1':
+            self.assertAlmostEqual(driver_iteration_data['constraints'][0]['values'][0], -22.42830237)
+            self.assertAlmostEqual(driver_iteration_data['constraints'][1]['values'][0], -11.94151185)
+            self.assertEqual(driver_iteration_data['constraints'][1]['name'], 'con_cmp2.con2')
+            self.assertEqual(driver_iteration_data['constraints'][0]['name'], 'con_cmp1.con1')
+        elif driver_iteration_data['constraints'][0]['name'] == 'con_cmp2.con2':
+            self.assertAlmostEqual(driver_iteration_data['constraints'][1]['values'][0], -22.42830237)
+            self.assertAlmostEqual(driver_iteration_data['constraints'][0]['values'][0], -11.94151185)
+            self.assertEqual(driver_iteration_data['constraints'][0]['name'], 'con_cmp2.con2')
+            self.assertEqual(driver_iteration_data['constraints'][1]['name'], 'con_cmp1.con1')
+        else:
+            self.assertTrue(False, 'Driver iteration data did not contain the expected names for constraints')
+
+        self.assertEqual(driver_iteration_data['desvars'], [])
+        self.assertEqual(driver_iteration_data['objectives'], [])
+        self.assertEqual(driver_iteration_data['responses'], [])
+
+    def test_simple_driver_recording(self, m):
+        self.setup_endpoints(m)
+        recorder = OpenMDAOServerRecorder(self._accepted_token)
+
+        if OPT is None:
+            raise unittest.SkipTest("pyoptsparse is not installed")
+
+        if OPTIMIZER is None:
+            raise unittest.SkipTest("pyoptsparse is not providing SNOPT or SLSQP")
+
+        prob = Problem()
+        model = prob.model = Group()
+
+        model.add_subsystem('p1', IndepVarComp('x', 50.0), promotes=['*'])
+        model.add_subsystem('p2', IndepVarComp('y', 50.0), promotes=['*'])
+        model.add_subsystem('comp', Paraboloid(), promotes=['*'])
+        model.add_subsystem('con', ExecComp('c = - x + y'), promotes=['*'])
+
+        model.suppress_solver_output = True
+
+        prob.driver = pyOptSparseDriver()
+
+        prob.driver.add_recorder(recorder)
+        recorder.options['record_desvars'] = True
+        recorder.options['record_responses'] = True
+        recorder.options['record_objectives'] = True
+        recorder.options['record_constraints'] = True
+
+        prob.driver.options['optimizer'] = OPTIMIZER
+        if OPTIMIZER == 'SLSQP':
+            prob.driver.opt_settings['ACC'] = 1e-9
+
+        model.add_design_var('x', lower=-50.0, upper=50.0)
+        model.add_design_var('y', lower=-50.0, upper=50.0)
+        model.add_objective('f_xy')
+        model.add_constraint('c', upper=-15.0)
+        prob.setup(check=False)
+
+        t0, t1 = run_driver(prob)
+
+        prob.cleanup()
+
+        coordinate = [0, 'SLSQP', (3, )]
+
+        driver_iteration_data = json.loads(self.driver_iteration_data)
+        print(driver_iteration_data)
+
+        # expected_desvars = {
+        #                     "p1.x": [7.16706813, ],
+        #                     "p2.y": [-7.83293187, ]
+        #                    }
+
+        # expected_objectives = {"comp.f_xy": [-27.0833, ], }
+
+        # expected_constraints = {"con.c": [-15.0, ], }
 
 def run_driver(problem):
     t0 = time.time()

@@ -227,6 +227,7 @@ class SqliteRecorder(BaseRecorder):
                 for name, value in iteritems(constraints_values):
                     constraints_array[name] = value
 
+        print(desvars_array)
         desvars_blob = array_to_blob(desvars_array)
         responses_blob = array_to_blob(responses_array)
         objectives_blob = array_to_blob(objectives_array)
