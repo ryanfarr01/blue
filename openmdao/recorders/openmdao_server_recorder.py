@@ -253,14 +253,21 @@ class OpenMDAOServerRecorder(BaseRecorder):
                 # use all the inputs
                 ins = inputs._names
 
-            dtype_tuples = []
+            inputs_array = []
             for name, value in iteritems(ins):
-                tple = (name, '({},)f8'.format(len(value)))
-                dtype_tuples.append(tple)
+                inputs_array.append({
+                    'name': name,
+                    'values': list(value)
+                })
 
-            inputs_array = np.zeros((1,), dtype=dtype_tuples)
-            for name, value in iteritems(ins):
-                inputs_array[name] = value
+            # dtype_tuples = []
+            # for name, value in iteritems(ins):
+            #     tple = (name, '({},)f8'.format(len(value)))
+            #     dtype_tuples.append(tple)
+
+            # inputs_array = np.zeros((1,), dtype=dtype_tuples)
+            # for name, value in iteritems(ins):
+            #     inputs_array[name] = value
 
         # Outputs
         if self.options['record_outputs'] and outputs._names:
@@ -275,14 +282,21 @@ class OpenMDAOServerRecorder(BaseRecorder):
                 # use all the outputs
                 outs = outputs._names
 
-            dtype_tuples = []
+            outputs_array = []
             for name, value in iteritems(outs):
-                tple = (name, '({},)f8'.format(len(value)))
-                dtype_tuples.append(tple)
+                outputs_array.append({
+                    'name': name,
+                    'values': list(value)
+                })
 
-            outputs_array = np.zeros((1,), dtype=dtype_tuples)
-            for name, value in iteritems(outs):
-                outputs_array[name] = value
+            # dtype_tuples = []
+            # for name, value in iteritems(outs):
+            #     tple = (name, '({},)f8'.format(len(value)))
+            #     dtype_tuples.append(tple)
+
+            # outputs_array = np.zeros((1,), dtype=dtype_tuples)
+            # for name, value in iteritems(outs):
+            #     outputs_array[name] = value
 
         # Residuals
         if self.options['record_residuals'] and residuals._names:
@@ -299,13 +313,12 @@ class OpenMDAOServerRecorder(BaseRecorder):
 
             dtype_tuples = []
             if resids:
+                residuals_array = []
                 for name, value in iteritems(resids):
-                    tple = (name, '({},)f8'.format(len(value)))
-                    dtype_tuples.append(tple)
-
-                residuals_array = np.zeros((1,), dtype=dtype_tuples)
-                for name, value in iteritems(resids):
-                    residuals_array[name] = value
+                    residuals_array.append({
+                        'name': name,
+                        'values': list(value)
+                    })
 
         iteration_coordinate = get_formatted_iteration_coordinate()
         system_iteration_dict = {
