@@ -1,10 +1,13 @@
 """
-Class definition for SqliteRecorder, which provides dictionary backed by SQLite.
+Class definition for OpenMDAOServerRecorder, which provides access to the OpenMDAO server endpoints.
 """
 
 import io
-import sqlite3
+import requests
 
+import base64
+import json
+import bson
 import numpy as np
 from six import iteritems
 from six.moves import cPickle as pickle
@@ -13,93 +16,61 @@ from openmdao.core.driver import Driver
 from openmdao.core.system import System
 from openmdao.recorders.base_recorder import BaseRecorder
 from openmdao.solvers.solver import Solver, NonlinearSolver
-from openmdao.recorders.recording_iteration_stack import \
-    get_formatted_iteration_coordinate, recording_iteration_stack
-
-
-def array_to_blob(array):
-    """
-    Make numpy array in to BLOB type.
-
-    Convert a numpy array to something that can be written
-    to a BLOB field in sqlite
-
-    TODO: move this to a util file?
-    """
-    out = io.BytesIO()
-    np.save(out, array)
-    out.seek(0)
-    return sqlite3.Binary(out.read())
-
-
-def blob_to_array(blob):
-    """
-    Convert sqlite BLOB to numpy array.
-
-    TODO: move this to a util file?
-    """
-    out = io.BytesIO(blob)
-    out.seek(0)
-    return np.load(out)
-
+from openmdao.recorders.recording_iteration_stack import get_formatted_iteration_coordinate
 
 format_version = 1
+_endpoint_addr = 'http://207.38.86.50'
+_port = '18403'
+_endpoint = _endpoint_addr + ':' + _port + '/case'
 
-
-class SqliteRecorder(BaseRecorder):
+class OpenMDAOServerRecorder(BaseRecorder):
     """
-    Recorder that saves cases in a sqlite db.
+    Recorder that saves cases to the OpenMDAO server
 
     Attributes
     ----------
     model_viewer_data : dict
         Dict that holds the data needed to generate N2 diagram.
-    con
-        Connection to the sqlite3 database.
-    cursor
-        Sqlite3 system cursor via the con.
     """
 
-    def __init__(self, out):
+    def __init__(self, token, case_name='Case Recording'):
         """
-        Initialize the SqliteRecorder.
+        Initialize the OpenMDAOServerRecorder.
+
+        Parameters
+        ----------
+        token: <string>
+            The token to be passed as a passphrase for authentication of each server request
+        case_name: <string>
+            The name this case should be stored under. Default: 'Case Recording'
         """
-        super(SqliteRecorder, self).__init__()
+        super(OpenMDAOServerRecorder, self).__init__()
 
         self.model_viewer_data = None
+        self._headers = {'token': token}
 
-        # isolation_level=None causes autocommit
-        self.con = sqlite3.connect(out, isolation_level=None)
+        case_data_dict = {
+            'case_name': case_name,
+            'owner': 'temp_owner'
+        }
 
-        self.cursor = self.con.cursor()
+        case_data = json.dumps(case_data_dict)
 
-        self.cursor.execute("CREATE TABLE metadata( format_version INT)")
-        self.cursor.execute("INSERT INTO metadata(format_version) VALUES(?)", (format_version,))
+        case_request = requests.post(_endpoint, data=case_data, headers=self._headers)
+        response = case_request.json()
+        if response['status'] != 'Failed':
+            self._case_id = str(response['case_id'])
+        else:
+            self._case_id = '-1'
+            # print("Failed to initialize case on server. No messages will be accepted from server for this case.")
 
-        # used to keep track of the order of the case records across all three tables
-        self.cursor.execute("CREATE TABLE global_iterations(id INTEGER PRIMARY KEY, "
-                            "record_type TEXT, rowid INT)")
-        self.cursor.execute("CREATE TABLE driver_iterations(id INTEGER PRIMARY KEY, counter INT,"
-                            "iteration_coordinate TEXT, timestamp REAL, success INT, msg TEXT, "
-                            "desvars BLOB, responses BLOB, objectives BLOB, constraints BLOB)")
-        self.cursor.execute("CREATE TABLE system_iterations(id INTEGER PRIMARY KEY, counter INT, "
-                            "iteration_coordinate TEXT,  timestamp REAL, success INT, msg TEXT, "
-                            "inputs BLOB, outputs BLOB, residuals BLOB)")
-        self.cursor.execute("CREATE TABLE solver_iterations(id INTEGER PRIMARY KEY, counter INT, "
-                            "iteration_coordinate TEXT, timestamp REAL, success INT, msg TEXT, "
-                            "abs_err REAL, rel_err REAL, solver_output BLOB, "
-                            "solver_residuals BLOB)")
-
-        self.cursor.execute("CREATE TABLE driver_metadata(id TEXT PRIMARY KEY, "
-                            "model_viewer_data BLOB)")
-        self.cursor.execute("CREATE TABLE system_metadata(id TEXT PRIMARY KEY,"
-                            " scaling_factors BLOB)")
-        self.cursor.execute("CREATE TABLE solver_metadata(id TEXT PRIMARY KEY, solver_options BLOB,"
-                            " solver_class TEXT)")
+            if 'reasoning' in response:
+                # print("Failure reasoning: " + response['reasoning'])
+                pass
 
     def record_iteration(self, object_requesting_recording, metadata, **kwargs):
         """
-        Store the provided data in the sqlite file using the iteration coordinate for the key.
+        Store the provided data in the OpenMDAO server using the iteration coordinate for the key.
 
         Parameters
         ----------
@@ -110,13 +81,13 @@ class SqliteRecorder(BaseRecorder):
         **kwargs :
             Various keyword arguments needed for System or Solver recordings.
         """
-        super(SqliteRecorder, self).record_iteration(object_requesting_recording, metadata)
+        super(OpenMDAOServerRecorder, self).record_iteration(object_requesting_recording, metadata)
 
         if isinstance(object_requesting_recording, Driver):
             self.record_iteration_driver(object_requesting_recording, metadata)
 
         elif isinstance(object_requesting_recording, System):
-            self.record_iteration_system(object_requesting_recording, metadata)
+            self.record_iteration_system(object_requesting_recording, metadata, kwargs['method'])
 
         elif isinstance(object_requesting_recording, Solver):
             self.record_iteration_solver(object_requesting_recording, metadata, **kwargs)
@@ -148,13 +119,17 @@ class SqliteRecorder(BaseRecorder):
         responses_array = None
         objectives_array = None
         constraints_array = None
+        desvars_values = None
+        responses_values = None
+        objectives_values = None
+        constraints_values = None
 
         # Just an example of the syntax for creating a numpy structured array
         # arr = np.zeros((1,), dtype=[('dv_x','(5,)f8'),('dv_y','(10,)f8')])
 
         # This returns a dict of names and values. Use this to build up the tuples of
         # used for the dtypes in the creation of the numpy structured array
-        # we want to write to sqlite
+        # we want to write to the OpenMDAO server
         if self.options['record_desvars']:
             if self._filtered_driver:
                 desvars_values = \
@@ -163,15 +138,12 @@ class SqliteRecorder(BaseRecorder):
                 desvars_values = object_requesting_recording.get_design_var_values()
 
             if desvars_values:
-                dtype_tuples = []
+                desvars_array = []
                 for name, value in iteritems(desvars_values):
-                    tple = (name, '{}f8'.format(value.shape))
-                    dtype_tuples.append(tple)
-
-                desvars_array = np.zeros((1,), dtype=dtype_tuples)
-
-                for name, value in iteritems(desvars_values):
-                    desvars_array[name] = value
+                    desvars_array.append({
+                        'name': name,
+                        'values': list(value)
+                    })
 
         if self.options['record_responses']:
             if self._filtered_driver:
@@ -181,15 +153,12 @@ class SqliteRecorder(BaseRecorder):
                 responses_values = object_requesting_recording.get_response_values()
 
             if responses_values:
-                dtype_tuples = []
+                responses_array = []
                 for name, value in iteritems(responses_values):
-                    tple = (name, '{}f8'.format(value.shape))
-                    dtype_tuples.append(tple)
-
-                responses_array = np.zeros((1,), dtype=dtype_tuples)
-
-                for name, value in iteritems(responses_values):
-                    responses_array[name] = value
+                    responses_array.append({
+                        'name': name,
+                        'values': list(value)
+                    })
 
         if self.options['record_objectives']:
             if self._filtered_driver:
@@ -199,15 +168,12 @@ class SqliteRecorder(BaseRecorder):
                 objectives_values = object_requesting_recording.get_objective_values()
 
             if objectives_values:
-                dtype_tuples = []
+                objectives_array = []
                 for name, value in iteritems(objectives_values):
-                    tple = (name, '{}f8'.format(value.shape))
-                    dtype_tuples.append(tple)
-
-                objectives_array = np.zeros((1,), dtype=dtype_tuples)
-
-                for name, value in iteritems(objectives_values):
-                    objectives_array[name] = value
+                    objectives_array.append({
+                        'name': name,
+                        'values': list(value)
+                    })
 
         if self.options['record_constraints']:
             if self._filtered_driver:
@@ -217,36 +183,38 @@ class SqliteRecorder(BaseRecorder):
                 constraints_values = object_requesting_recording.get_constraint_values()
 
             if constraints_values:
-                dtype_tuples = []
+                constraints_array = []
                 for name, value in iteritems(constraints_values):
-                    tple = (name, '{}f8'.format(value.shape))
-                    dtype_tuples.append(tple)
-
-                constraints_array = np.zeros((1,), dtype=dtype_tuples)
-
-                for name, value in iteritems(constraints_values):
-                    constraints_array[name] = value
-
-        print(desvars_array)
-        desvars_blob = array_to_blob(desvars_array)
-        responses_blob = array_to_blob(responses_array)
-        objectives_blob = array_to_blob(objectives_array)
-        constraints_blob = array_to_blob(constraints_array)
+                    constraints_array.append({
+                        'name': name,
+                        'values': list(value)
+                    })
 
         iteration_coordinate = get_formatted_iteration_coordinate()
 
-        self.cursor.execute("INSERT INTO driver_iterations(counter, iteration_coordinate, "
-                            "timestamp, success, msg, desvars , responses , objectives , "
-                            "constraints ) VALUES(?,?,?,?,?,?,?,?,?)",
-                            (self._counter, iteration_coordinate,
-                             metadata['timestamp'], metadata['success'],
-                             metadata['msg'], desvars_blob,
-                             responses_blob, objectives_blob,
-                             constraints_blob))
-        self.con.execute("INSERT INTO global_iterations(record_type, rowid) VALUES(?,?)",
-                         ('driver', self.cursor.lastrowid))
+        driver_iteration_dict = {
+            "counter": self._counter,
+            "iteration_coordinate": iteration_coordinate,
+            "success": metadata['success'],
+            "msg": metadata['msg'],
+            "desvars": self.convert_to_list(desvars_array),
+            "responses": self.convert_to_list(responses_array),
+            "objectives": self.convert_to_list(objectives_array),
+            "constraints": self.convert_to_list(constraints_array)
+        }
 
-    def record_iteration_system(self, object_requesting_recording, metadata):
+        global_iteration_dict = {
+            'record_type': 'driver',
+            'counter': self._counter
+        }
+
+        driver_iteration = json.dumps(driver_iteration_dict)
+        global_iteration = json.dumps(global_iteration_dict)
+        
+        requests.post(_endpoint + '/' + self._case_id + '/driver_iterations', data=driver_iteration, headers=self._headers)
+        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration, headers=self._headers)
+
+    def record_iteration_system(self, object_requesting_recording, metadata, method):
         """
         Record an iteration using system options.
 
@@ -261,9 +229,6 @@ class SqliteRecorder(BaseRecorder):
             '_apply_nonlinear,' '_solve_nonlinear'. Behavior varies based on from which function
             record_iteration was called.
         """
-        stack_top = recording_iteration_stack[-1][0]
-        method = stack_top.split('.')[-1]
-
         if method not in ['_apply_linear', '_apply_nonlinear', '_solve_linear',
                           '_solve_nonlinear']:
             raise ValueError("method must be one of: '_apply_linear, "
@@ -288,14 +253,21 @@ class SqliteRecorder(BaseRecorder):
                 # use all the inputs
                 ins = inputs._names
 
-            dtype_tuples = []
+            inputs_array = []
             for name, value in iteritems(ins):
-                tple = (name, '({},)f8'.format(len(value)))
-                dtype_tuples.append(tple)
+                inputs_array.append({
+                    'name': name,
+                    'values': list(value)
+                })
 
-            inputs_array = np.zeros((1,), dtype=dtype_tuples)
-            for name, value in iteritems(ins):
-                inputs_array[name] = value
+            # dtype_tuples = []
+            # for name, value in iteritems(ins):
+            #     tple = (name, '({},)f8'.format(len(value)))
+            #     dtype_tuples.append(tple)
+
+            # inputs_array = np.zeros((1,), dtype=dtype_tuples)
+            # for name, value in iteritems(ins):
+            #     inputs_array[name] = value
 
         # Outputs
         if self.options['record_outputs'] and outputs._names:
@@ -310,14 +282,21 @@ class SqliteRecorder(BaseRecorder):
                 # use all the outputs
                 outs = outputs._names
 
-            dtype_tuples = []
+            outputs_array = []
             for name, value in iteritems(outs):
-                tple = (name, '({},)f8'.format(len(value)))
-                dtype_tuples.append(tple)
+                outputs_array.append({
+                    'name': name,
+                    'values': list(value)
+                })
 
-            outputs_array = np.zeros((1,), dtype=dtype_tuples)
-            for name, value in iteritems(outs):
-                outputs_array[name] = value
+            # dtype_tuples = []
+            # for name, value in iteritems(outs):
+            #     tple = (name, '({},)f8'.format(len(value)))
+            #     dtype_tuples.append(tple)
+
+            # outputs_array = np.zeros((1,), dtype=dtype_tuples)
+            # for name, value in iteritems(outs):
+            #     outputs_array[name] = value
 
         # Residuals
         if self.options['record_residuals'] and residuals._names:
@@ -334,29 +313,34 @@ class SqliteRecorder(BaseRecorder):
 
             dtype_tuples = []
             if resids:
+                residuals_array = []
                 for name, value in iteritems(resids):
-                    tple = (name, '({},)f8'.format(len(value)))
-                    dtype_tuples.append(tple)
-
-                residuals_array = np.zeros((1,), dtype=dtype_tuples)
-                for name, value in iteritems(resids):
-                    residuals_array[name] = value
-
-        inputs_blob = array_to_blob(inputs_array)
-        outputs_blob = array_to_blob(outputs_array)
-        residuals_blob = array_to_blob(residuals_array)
+                    residuals_array.append({
+                        'name': name,
+                        'values': list(value)
+                    })
 
         iteration_coordinate = get_formatted_iteration_coordinate()
+        system_iteration_dict = {
+            'counter': self._counter,
+            'iteration_coordinate': iteration_coordinate,
+            'success': metadata['success'],
+            'msg': metadata['msg'],
+            'inputs': self.convert_to_list(inputs_array),
+            'outputs': self.convert_to_list(outputs_array),
+            'residuals': self.convert_to_list(residuals_array)
+        }
 
-        self.cursor.execute("INSERT INTO system_iterations(counter, iteration_coordinate, "
-                            "timestamp, success, msg, inputs , outputs , residuals ) "
-                            "VALUES(?,?,?,?,?,?,?,?)",
-                            (self._counter, iteration_coordinate,
-                             metadata['timestamp'], metadata['success'],
-                             metadata['msg'], inputs_blob,
-                             outputs_blob, residuals_blob))
-        self.cursor.execute("INSERT INTO global_iterations(record_type, rowid) VALUES(?,?)",
-                            ('system', self.cursor.lastrowid))
+        global_iteration_dict = {
+            'record_type': 'system',
+            'counter': self._counter
+        }
+
+        system_iteration = json.dumps(system_iteration_dict)
+        global_iteration = json.dumps(global_iteration_dict)
+
+        requests.post(_endpoint + '/' + self._case_id + '/system_iterations', data=system_iteration, headers=self._headers)
+        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration, headers=self._headers)
 
     def record_iteration_solver(self, object_requesting_recording, metadata, **kwargs):
         """
@@ -437,22 +421,29 @@ class SqliteRecorder(BaseRecorder):
                 for name, value in iteritems(res):
                     residuals_array[name] = value
 
-        outputs_blob = array_to_blob(outputs_array)
-        residuals_blob = array_to_blob(residuals_array)
-
         iteration_coordinate = get_formatted_iteration_coordinate()
 
-        self.cursor.execute("INSERT INTO solver_iterations(counter, iteration_coordinate, "
-                            "timestamp, success, msg, abs_err, rel_err, solver_output, "
-                            "solver_residuals) VALUES(?,?,?,?,?,?,?,?,?)",
-                            (self._counter, iteration_coordinate,
-                             metadata['timestamp'],
-                             metadata['success'], metadata['msg'],
-                             abs_error, rel_error,
-                             outputs_blob, residuals_blob))
+        solver_iteration_dict = {
+            'counter': self._counter,
+            'iteration_coordinate': iteration_coordinate,
+            'success': metadata['success'],
+            'msg': metadata['msg'],
+            'abs_err': abs_error,
+            'rel_err': rel_error,
+            'solver_output': self.convert_to_list(outputs_array),
+            'solver_residuals': self.convert_to_list(residuals_array)
+        }
 
-        self.cursor.execute("INSERT INTO global_iterations(record_type, rowid) VALUES(?,?)",
-                            ('solver', self.cursor.lastrowid))
+        global_iteration_dict = {
+            'record_type': 'solver',
+            'counter': self._counter
+        }
+
+        solver_iteration = json.dumps(solver_iteration_dict)
+        global_iteration = json.dumps(global_iteration_dict)
+
+        requests.post(_endpoint + '/' + self._case_id + '/solver_iterations', data=solver_iteration, headers=self._headers)
+        requests.post(_endpoint + '/' + self._case_id + '/global_iterations', data=global_iteration, headers=self._headers)
 
     def record_metadata(self, object_requesting_recording):
         """
@@ -481,11 +472,15 @@ class SqliteRecorder(BaseRecorder):
             The Driver that would like to record its metadata.
         """
         driver_class = type(object_requesting_recording).__name__
-        model_viewer_data = pickle.dumps(object_requesting_recording._model_viewer_data,
-                                         pickle.HIGHEST_PROTOCOL)
+        model_viewer_data = json.dumps(object_requesting_recording._model_viewer_data)
+        
+        driver_metadata_dict = {
+            'id': driver_class,
+            'model_viewer_data': model_viewer_data
+        }
+        driver_metadata = json.dumps(driver_metadata_dict)
 
-        self.con.execute("INSERT INTO driver_metadata(id, model_viewer_data) "
-                         "VALUES(?,?)", (driver_class, sqlite3.Binary(model_viewer_data)))
+        requests.post(_endpoint + '/' + self._case_id + '/driver_metadata', data=driver_metadata, headers=self._headers)
 
     def record_metadata_system(self, object_requesting_recording):
         """
@@ -496,14 +491,16 @@ class SqliteRecorder(BaseRecorder):
         object_requesting_recording: <System>
             The System that would like to record its metadata.
         """
-        scaling_factors = pickle.dumps(object_requesting_recording._scaling_vecs,
-                                       pickle.HIGHEST_PROTOCOL)
-
-        path = object_requesting_recording.pathname
-        if not path:
-            path = 'root'
-        self.con.execute("INSERT INTO system_metadata(id, scaling_factors) VALUES(?,?)",
-                         (path, sqlite3.Binary(scaling_factors)))
+        scaling_vecs = pickle.dumps(object_requesting_recording._scaling_vecs,
+                                    pickle.HIGHEST_PROTOCOL)
+        encoded_scaling_vecs = base64.encodebytes(scaling_vecs)
+        system_metadata_dict = {
+            'id': object_requesting_recording.pathname,
+            'scaling_factors': encoded_scaling_vecs.decode('ascii')
+        }
+        system_metadata = json.dumps(system_metadata_dict)
+        
+        requests.post(_endpoint + '/' + self._case_id + '/system_metadata', data=system_metadata, headers=self._headers)
 
     def record_metadata_solver(self, object_requesting_recording):
         """
@@ -516,18 +513,39 @@ class SqliteRecorder(BaseRecorder):
         """
         path = object_requesting_recording._system.pathname
         solver_class = type(object_requesting_recording).__name__
-        if not path:
-            path = 'root'
-        id = "{}.{}".format(path, solver_class)
+        id = "%s.%s".format(path, solver_class)
 
-        solver_options = pickle.dumps(object_requesting_recording.options,
-                                      pickle.HIGHEST_PROTOCOL)
-        self.con.execute(
-            "INSERT INTO solver_metadata(id, solver_options, solver_class) "
-            "VALUES(?,?,?)", (id, sqlite3.Binary(solver_options), solver_class))
+        opts = pickle.dumps(object_requesting_recording.options, 
+                            pickle.HIGHEST_PROTOCOL)
+        encoded_opts = base64.encodebytes(opts)
+
+        solver_options_dict = {
+            'options': encoded_opts.decode('ascii'),
+        }
+
+        solver_options = json.dumps(solver_options_dict)
+        
+        solver_metadata_dict = {
+            'id': id,
+            'solver_options': solver_options,
+            'solver_class': solver_class
+        }
+        solver_metadata = json.dumps(solver_metadata_dict)
+
+        requests.post(_endpoint + '/' + self._case_id + '/solver_metadata', data=solver_metadata, headers=self._headers)
 
     def close(self):
         """
-        Close `out`.
+        Close.
         """
-        self.con.close()
+        pass
+
+    def convert_to_list(self, obj):
+        if isinstance(obj, np.ndarray):
+            return self.convert_to_list(obj.tolist())
+        elif isinstance(obj, (list, tuple)):
+            return [self.convert_to_list(item) for item in obj]
+        elif obj == None:
+            return []
+        else:
+            return obj

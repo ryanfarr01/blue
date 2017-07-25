@@ -7,6 +7,7 @@ from openmdao.core.parallel_group import ParallelGroup
 from openmdao.core.explicitcomponent import ExplicitComponent
 from openmdao.core.implicitcomponent import ImplicitComponent
 from openmdao.core.indepvarcomp import IndepVarComp
+from openmdao.core.analysis_error import AnalysisError
 
 # Components
 from openmdao.components.deprecated_component import Component
@@ -65,3 +66,4 @@ from openmdao.utils.options_dictionary import OptionsDictionary
 
 # Recorders
 from openmdao.recorders.sqlite_recorder import SqliteRecorder
+from openmdao.recorders.openmdao_server_recorder import OpenMDAOServerRecorder
