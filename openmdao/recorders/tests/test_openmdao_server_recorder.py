@@ -67,6 +67,14 @@ class TestServerRecorder(unittest.TestCase):
     def setUp(self):
         super(TestServerRecorder, self).setUp()
 
+    def assert_array_close(self, test_val, comp_set):
+        values_arr = [t for t in comp_set if t['name'] == test_val['name']]
+        if(len(values_arr) != 1):
+            self.assertTrue(False, 'Expected to find a value with a unique name in the comp_set, but found 0 or more than 1 instead')
+            return
+        
+        np.testing.assert_almost_equal(test_val['values'], values_arr[0]['values'], decimal=5)
+
     def setup_sellar_model(self):
         self.prob = Problem()
 
@@ -345,8 +353,49 @@ class TestServerRecorder(unittest.TestCase):
         scaling_facts = pickle.loads(scaling_facts_base64)
         system_metadata['scaling_factors'] = scaling_facts
 
-        # print(system_metadata)
-        # print(system_iterations)
+        inputs = [
+            {'name': 'd1.z', 'values': [5.0, 2.0]},
+            {'name': 'd1.x', 'values': [1.0]},
+            {'name': 'd2.z', 'values': [5.0, 2.0]},
+            {'name': 'd1.y2', 'values': [12.05848815]}
+        ]
+
+        outputs = [
+            {'name': 'd1.y1', 'values': [25.58830237]}
+        ]
+
+        residuals = [
+            {'name': 'd1.y1', 'values': [0.0]}
+        ]
+
+        for i in inputs:
+            self.assert_array_close(i, system_iterations['inputs'])
+        for o in outputs:
+            self.assert_array_close(o, system_iterations['outputs'])
+        for r in residuals:
+            self.assert_array_close(r, system_iterations['residuals'])
+
+        inputs = [ 
+            {'name': 'con_cmp2.y2', 'values': [12.058488150624356]},
+            {'name': 'obj_cmp.y1', 'values': [25.58830237000701]},
+            {'name': 'obj_cmp.x', 'values': [1.0]},
+            {'name': 'obj_cmp.z', 'values': [5.0, 2.0]}
+        ]
+
+        outputs = [
+            {'name': 'obj_cmp.obj', 'values': [28.58830816]}
+        ]
+
+        residuals = [
+            {'name': 'obj_cmp.obj', 'values': [0.0]}
+        ]
+        
+        for i in inputs:
+            self.assert_array_close(i, system_iterations['inputs'])
+        for o in outputs:
+            self.assert_array_close(o, system_iterations['outputs'])
+        for r in residuals:
+            self.assert_array_close(r, system_iterations['residuals'])
 
     # def test_simple_driver_recording(self, m):
     #     self.setup_endpoints(m)
